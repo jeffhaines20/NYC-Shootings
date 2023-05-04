@@ -1,0 +1,154 @@
+---
+title: "NYPD Shootings"
+author: "Jeff Haines"
+date: "2023-05-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# NYPD Shootings
+
+Gun violence is a major problem in the United States. In 2022, 20,000 Americans (excluding suicides) died from gunshots (<https://www.thetrace.org/2022/12/gun-violence-deaths-statistics-america/>). Given the size of the problem, even marginal improvements could save many lives every year. With that in mind, I use data from the New York Police Department (NYPD) to analyze shootings in the five boroughs of New York City. Specifically, I want to compare not only the shootings between the difference boroughs, but also the fatality rates. I also want to develop a better understanding of who gets shot, and so I will also look at the race of victims and the fatality rate by race. Developing a better understanding of who is shot and who is likely to die from being shot might help to at least make incremental progress on saving lives.
+
+The data used in this analysis comes from the NYPD and contains every shooting incidents recorded from 2006-2022.The records include the date and time, whether the shooting resulted in a murder, and information about the location of the shooting,  the victim, and the perpetrator. The data can be accessed at <https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic>.
+
+```{r, echo = TRUE, warning = FALSE}
+library(tidyverse)
+library(knitr)
+```
+
+```{r}
+url_in = "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv"
+nypd_df = read_csv(url_in, show_col_types = FALSE)
+```
+
+## Data Cleaning
+
+After downloading the data, I inspect it. 
+```{r}
+summary(nypd_df)
+```
+
+There are several potential issues here. First, the `OCCUR_DATE` column contains characters, not date objects. Second, many of the columns are not very useful for my analysis and/or contain many missing values, so I will drop them.
+
+```{r}
+# make OCCUR_DATE a date object
+nypd_df = nypd_df %>% mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+
+# drop unnecessary columns
+drop_cols = c('INCIDENT_KEY','LOC_OF_OCCUR_DESC','LOC_OF_CLASSFCTN_DESC','LOCATION_DESC',
+              'X_COORD_CD','Y_COORD_CD','LOC_CLASSFCTN_DESC')
+df = nypd_df[,!(names(nypd_df) %in% drop_cols)]
+```
+
+## Data Visualization and Analysis
+Now, let's look at the data. The first, most obvious thing to do is to compare the shootings in the five boroughs. Because boroughs have different populations, it is useful to weight the number of shootings by population. Since the shooting data covers the years 2006 - 2022, it is not immediately obvious how to do this. I opt to take the borough population in the median year - 2014. 
+
+I use the 2014 American Community Survey, administered by the US Census Bureau, to get the populations of the five boroughs in 2014 (available at <https://s-media.nyc.gov/agencies/dcp/assets/files/pdf/data-tools/census/acs/demo_2014acs1yr_nyc.pdf>. Let's see how they compare:
+
+```{r}
+df1 = df %>%
+  group_by(BORO) %>%
+  summarize(shootings = n())
+
+df1$population_2014 = c(1438159,2621793,1636268,2321580,473270)
+df1$per_1000 = df1$shootings / (df1$population_2014/1000)
+kable(df1)
+```
+
+It appears that the Bronx and Brooklyn have the most shootings per 1,000 people.
+
+```{r}
+df1 %>% 
+  ggplot(aes(x=BORO,y=per_1000, fill=BORO)) +
+  geom_bar(stat = "identity") +
+  labs(title="Figure 1: Shootings Per 1,000 People",y='Shootings Per 1,000', x = 'Borough', 
+       fill = "Borough")
+```
+
+I also want to investigate the race of the shooting victims. First, let's break down the borough shootings by the race of the victims. The following table shows, for each borough, the number of shooting victims of each race and the percentage they make up of the total shootings in that borough.We see that the victims of shootings are most likely to be black. 
+
+```{r}
+df_race = df %>%
+  group_by(BORO, VIC_RACE) %>%
+  summarize(shootings = n()) %>%
+  mutate(proportion = round(shootings/sum(shootings),2))
+
+kable(df_race)
+```
+
+Displaying this data using a stacked bar chart is even more striking. The victims in all five boroughs are overwhelmingly likely to be black. 
+
+```{r}
+df_race %>% ggplot(aes(x=BORO, y = shootings, fill=VIC_RACE)) +
+  geom_bar(position="stack", stat="identity") +
+  theme(axis.text.x = element_text(angle=90)) +
+  labs(title="Figure 2: Shootings by Borough and Race",y="Shootings",x="Borough", 
+       fill = "Victim Race")
+```
+
+The final analysis I want to undertake is to compare the lethality of shootings in the different boroughs and across races. 
+
+```{r}
+df_lethal = df %>%
+  group_by(VIC_RACE) %>%
+  summarize(shootings = n(), lethal =  sum(STATISTICAL_MURDER_FLAG)) %>%
+  mutate(lethal_prop = round(lethal / shootings,3))
+
+kable(df_lethal)
+```
+
+We can see that there are clear disparities among racial groups - across all boroughs, for example, shootings with white or Asian victims are especially likely to be lethal, but this is likely a statistical artifact due to the small numbers involved. Looking across boroughs, we can see that four of the five have an average fatality rate of around 20%. Only Manhattan is noticeably lower. Whether this reflects differences in health infrastructure, socioeconomic status, or motivations behind the shootings is something that warrants further investigation.
+
+```{r}
+df %>%
+  group_by(BORO) %>%
+  summarize(shootings = n(), lethal = sum(STATISTICAL_MURDER_FLAG)) %>%
+  mutate(lethal_prop = round(lethal / shootings,3)) %>%
+  kable()
+```
+
+Figure 3 offers a breakdown of the fatality rate by borough and race.
+
+```{r}
+df_lethal_race_boro = df %>%
+  group_by(BORO, VIC_RACE) %>%
+  summarize(shootings = n(), lethal = sum(STATISTICAL_MURDER_FLAG)) %>%
+  mutate(lethal_perc = (lethal / shootings)*100)
+
+df_lethal_race_boro %>% ggplot(aes(x=BORO, y = lethal_perc, fill=VIC_RACE)) +
+  geom_bar(position="dodge", stat="identity") +
+  theme(axis.text.x = element_text(angle=90)) +
+  labs(title="Figure 3: Fatality Rate by Borough and Race",y="Fatal %",x="Borough", 
+       fill = "Victim Race")
+```
+
+As mentioned above, the higher fatality rate for white victims might be due to randomness and the small numbers of white victims. To test for this, I regress the fatality rate on borough and on race (excluding the Asian/Pacific Islander, American Indian/Alaskan Native, and Unknown categories because of their very small sample sizes).
+
+The results are displayed below.
+
+```{r}
+white_black_df = df_lethal_race_boro %>% filter(VIC_RACE=='WHITE' | VIC_RACE == 'BLACK'| 
+  VIC_RACE == 'BLACK HISPANIC' | VIC_RACE == 'WHITE HISPANIC')
+
+model1 = lm(lethal_perc ~ VIC_RACE + BORO, data = white_black_df)
+
+summary(model1)
+```
+
+For race, the omitted category is black, and for borough, it is the Bronx.The linear regression indicates that in fact the higher fatality rate among white victims is not due to random chance. Controlling for borough, a white victim is 8.29% more likely to die from a gunshot wound than a black victim. If we expect that white victims on average will be of high socioeconomic status and have access to better health care, this is surprising. It could be that white victims and black victims are shot under different circumstances. Perhaps white victims are more likely to be the target of an intentional homicide by someone they know while black gunshot victims are more likely to be the victim of robbery. This is admittedly speculative and deserves more investigation.
+
+Among boroughs, it seems that a gunshot on Staten Island is significantly more likely to result in death. Indeed gunshots on Staten Island are 4.23% more likely to be fatal than those in the Bronx.
+
+
+## Conclusion
+Gun violence in America is a serious problem with no clear solution in sight. Given that roughly 20,000 Americans are killed by guns (excluding suicides) each year, even policy changes at the margins would result in saved lives. As such, there is a need for more careful analysis of the matter to figure out where gains can be made.
+
+Here I have offered some preliminary analyses of shootings and their lethality in New York City, broken down by borough and race of victim. There is, of course, room for much more to be done.
+
+I am admittedly not without my own biases on this issue. In the interest of full disclosure, I tend to favor stricter gun control laws and think that in general higher rates of gun ownership are associated with higher rates of gun violence. I think that these personal opinions, however, have not influenced my analysis here, because the simple analysis conducted here has eschewed questions of cause or of solution and just focused on where shootings occur, who the victims are, and how likely they are to be fatal. 
+
+I did make the decision to focus on victims rather than on perpetrators, which might reflect a bias, but I think that for the purposes here this is justified, given that data on perpetrators was often missing.
